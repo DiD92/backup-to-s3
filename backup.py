@@ -1,9 +1,11 @@
 #!/bin/python3
 import argparse
+import smtplib
+import ssl
 import syslog
 from datetime import datetime
-from os import remove as rm
-from os.path import abspath, basename, isdir, sep, split
+from os import environ as env, remove as rm
+from os.path import abspath, basename, isdir, sep as pathsep, split
 from shutil import make_archive, rmtree
 from tempfile import mkdtemp
 
@@ -56,17 +58,39 @@ def upload_to_s3(bucket, file_path, prefix, timestamp):
         syslog.syslog(syslog.LOG_INFO,
                       f'Uploaded {file_path} to S3 Bucket - {bucket.name}')
         return True
-    except S3UploadFailedError:
+    except S3UploadFailedError as s3ex:
         syslog.syslog(
-            syslog.LOG_ERR, f'Failed to upload {file_path} to S3 Bucket - {bucket_name} - {e.message}')
+            syslog.LOG_ERR, f'Failed to upload {file_path} to S3 Bucket - {bucket_name} - {s3ex}')
         return False
     finally:
         rm(file_path)
 
 
 def send_email(content, recipients):
-            syslog.syslog(syslog.LOG_INFO, f'Sending email/s to {recipients}')
-    pass
+    body_content = '\n'.join(content)
+    email_body = f'Folders backed up:\n{body_content}'
+
+    syslog.syslog(syslog.LOG_INFO, f'Sending email/s to {recipients}')
+
+    port = env.get('BACKUP_SYSTEM_SMTP_PORT', 465)
+    passwd = env.get('BACKUP_SYSTEM_SMTP_PASS', None)
+    sender_email = env.get('BACKUP_SYSTEM_SMTP_EMAIL', None)
+    smtp_server = env.get('BACKUP_SYSTEM_SMTP_ADDR', 'smtp.gmail.com')
+
+    if not passwd or not send_email:
+        syslog.syslog(syslog.LOG_WARNING, f'No valid login credentials for SMTP found!')
+        return
+
+    try:
+        context = ssl.create_default_context()
+
+        with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
+            server.login(sender_email, passwd)
+
+            for recipient in recipients:
+                server.sendmail(sender_email, recipient, email_body)
+    except smtplib.SMTPException as smtpex:
+        syslog.syslog(syslog.LOG_ERR, f'Error delivering email!: {smtpex}')
 
 
 if __name__ == "__main__":
@@ -117,17 +141,16 @@ if __name__ == "__main__":
             path_to_upload = make_archive(
                 base_dir='.', root_dir=folder, format='zip', base_name=out_path)
 
-            upload_result = upload_to_s3(
+            upload_success = upload_to_s3(
                 bucket, path_to_upload, prefix, timestamp)
 
             if email_list:
-                upload_result.append(
+                upload_results.append(
                     f'Uploaded {path_to_upload} to {bucket.name}')
 
         rmtree(base_tmp_dir)
 
-        if email_list:
-            # TODO: Send email here
-            pass
+        if upload_success and email_list:
+            send_email(upload_results, email_list)
     else:
         raise ValueError(f'Invalid target bucket {bucket_name}!')
