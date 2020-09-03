@@ -34,7 +34,7 @@ def is_valid_bucket(bucket_name: str):
         return s3.Bucket(bucket_name)
     except ClientError as e:
         syslog.syslog(syslog.LOG_ERR,
-                      f'Invalid S3 Bucket - {bucket_name} - {e.message}')
+                      f'Invalid S3 Bucket - {bucket_name} - {e}')
         return None
 
 
@@ -68,7 +68,7 @@ def upload_to_s3(bucket, file_path, prefix, timestamp):
 
 def send_email(content, recipients):
     body_content = '\n'.join(content)
-    email_body = f'Folders backed up:\n{body_content}'
+    email_body = f'Subject: Backup system info\nFolders backed up:\n{body_content}'
 
     syslog.syslog(syslog.LOG_INFO, f'Sending email/s to {recipients}')
 
